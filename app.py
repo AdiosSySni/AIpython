@@ -2,27 +2,41 @@ from flask import Flask, request, jsonify
 import cv2
 import numpy as np
 import os
+import tensorflow as tf
+from tensorflow.keras.applications.efficientnet import EfficientNetB4, preprocess_input
+from sklearn.metrics.pairwise import cosine_similarity
+
+# Инициализируем модель EfficientNetB4
+model = EfficientNetB4(weights='imagenet', include_top=False, pooling='avg')
+
+# Функция для извлечения признаков из изображения
+def extract_features(image_path):
+    img = cv2.imread(image_path)
+    img = cv2.resize(img, (224, 224))  # Изменяем размер изображения под требования модели
+    img_array = np.expand_dims(img, axis=0)
+    preprocessed_img = preprocess_input(img_array)
+    features = model.predict(preprocessed_img).flatten()
+    return features
 
 # Загрузка эталонных изображений
 def load_reference_images():
-    reference_images = []
-    for filename in os.listdir("./static/reference_images/"):
+    reference_images = {}
+    for filename in os.listdir("./static/reference_images"):
         if filename.endswith(".jpg") or filename.endswith(".png"):
-            img_path = os.path.join("reference_images", filename)
-            img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-            reference_images.append((filename, img))
+            img_path = os.path.join("./static/reference_images", filename)
+            features = extract_features(img_path)
+            reference_images[filename] = features
     return reference_images
 
 # Сравнение изображений
 def compare_images(query_image, reference_images):
-    query_hist = cv2.calcHist([query_image], [0], None, [256], [0, 256])
-    similar_images = []
-    for ref_filename, ref_image in reference_images:
-        ref_hist = cv2.calcHist([ref_image], [0], None, [256], [0, 256])
-        similarity = cv2.compareHist(query_hist, ref_hist, cv2.HISTCMP_CORREL)
-        similar_images.append((similarity, f'/static/reference_images/{ref_filename}'))
-    similar_images.sort(reverse=True)
-    return similar_images[:10]
+    query_features = extract_features(query_image)
+    similarities = []
+    for ref_filename, ref_features in reference_images.items():
+        similarity = cosine_similarity(query_features.reshape(1, -1), ref_features.reshape(1, -1))[0][0]
+        similarities.append((similarity, f'/static/reference_images/{ref_filename}'))
+    similarities.sort(reverse=True)
+    return similarities[:10]
 
 # Инициализация приложения Flask
 app = Flask(__name__)
@@ -50,11 +64,8 @@ def upload():
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
         
-        # Преобразуем загруженное изображение в формат OpenCV
-        query_image = cv2.imread(filepath, cv2.IMREAD_GRAYSCALE)
-        
         # Находим 10 наиболее похожих изображений
-        similar_images = compare_images(query_image, REFERENCE_IMAGES)
+        similar_images = compare_images(filepath, REFERENCE_IMAGES)
         
         # Возвращаем результат в формате JSON
         return jsonify({
