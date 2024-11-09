@@ -1,1 +1,4 @@
 .venv
+newModel.keras
+dataset
+validDataset
